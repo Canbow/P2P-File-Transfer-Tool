@@ -1,14 +1,14 @@
 # ⚡ P2P File Share Tool (WebRTC)
 ![Project Status](https://img.shields.io/badge/status-active-success.svg)
 ![License](https://img.shields.io/badge/license-MIT-blue.svg)
-![Tech Stack](https://img.shields.io/badge/stack-React%20%7C%20Node.js%20%7C%20WebRTC-orange)
+![Tech Stack](https://img.shields.io/badge/stack-React%20%7C%20Node.js%20%7C%20WebRTC%20%7C%20SQLite-orange)
 
-> **A privacy-focused file sharing tool that allows users to send unlimited-size files directly between devices without uploading them to any cloud server.**
+> **A privacy-focused file sharing tool that allows users to send unlimited-size files directly between devices without uploading them to any cloud server. Now featuring a modern UI and full OAuth Authentication.**
 
 ---
 
 ## 🚀 Live Demo
-**[Insert Your Vercel Link Here]** *(e.g., https://my-p2p-share.vercel.app)*
+**[Insert Your Live Link Here]** *(e.g., https://my-p2p-share.onrender.com)*
 
 ---
 
@@ -23,36 +23,28 @@ Most file-sharing services (WhatsApp, Email, WeTransfer) have strict limits:
 ---
 
 ## 🌟 Key Features
-* **Unlimited File Size:** Send 10GB+ files without crashing the browser.
+* **Unlimited File Size:** Send 10GB+ files without crashing the browser via StreamSaver backpressure.
 * **Zero-Knowledge Privacy:** Data is encrypted via WebRTC (DTLS) and never stored on any server.
+* **Modern Interface:** Beautiful, Shadcn-inspired UI with smooth micro-animations and a premium dashboard.
+* **Full Authentication:** Local Registration + OAuth (Google & GitHub) backed by an SQLite database.
 * **Cross-Platform:** Works on Windows, Mac, Linux, Android, and iOS (via browser).
-* **No Login Required:** Just share a link/Room ID.
 
 ---
 
 ## 🛠️ Tech Stack
-* **Frontend:** React.js (Vite/CRA), StreamSaver.js
-* **Backend (Signaling):** Node.js, Socket.io
-* **Core Protocol:** WebRTC (Simple-Peer)
-
----
-
-## 🧠 Technical Deep Dive (Challenges Solved)
-### 1. The "1GB RAM Crash" Problem
-Browsers cannot hold large files (e.g., 5GB videos) in memory. Attempting to read a whole file into a variable causes the tab to crash.
-* **Solution:** I implemented **Chunking** and **Backpressure**. The app reads the file in 64KB chunks. Before reading the next chunk, it checks the WebRTC buffer status. If the network is slow, it pauses disk reading until the buffer drains.
-
-### 2. Saving Large Files Client-Side
-Browsers typically download files to RAM (Blob) before saving to disk. This limits downloads to available RAM (~2GB).
-* **Solution:** Integrated `StreamSaver.js` to create a WritableStream directly to the user's hard drive. This allows receiving files larger than the device's physical RAM.
+* **Frontend:** React.js, Lucide Icons, Vanilla CSS (Shadcn aesthetic)
+* **Backend:** Node.js, Express, Socket.io
+* **Auth & DB:** Passport.js, SQLite3, express-session
+* **Core Protocol:** WebRTC (Simple-Peer), StreamSaver.js
 
 ---
 
 ## 📸 Architecture
 
-1.  **Signaling Phase:** Peers exchange SDP (handshakes) via the Node.js WebSocket server.
-2.  **Connection Phase:** A direct P2P connection is established.
-3.  **Data Phase:** The server is disconnected from the loop; data flows directly between peers.
+1.  **Authentication:** Users log in securely via standard sessions.
+2.  **Signaling Phase:** Peers exchange SDP (handshakes) via the Node.js WebSocket server using dynamic Room IDs.
+3.  **Connection Phase:** A direct P2P connection is established.
+4.  **Data Phase:** The server is completely bypassed; data flows directly between peers.
 
 ---
 
@@ -64,46 +56,65 @@ Browsers typically download files to RAM (Blob) before saving to disk. This limi
 
 ### 1. Clone the Repo
 ```bash
-git clone [https://github.com/YOUR_USERNAME/p2p-file-transfer.git](https://github.com/YOUR_USERNAME/p2p-file-transfer.git)
-cd p2p-file-transfer
+git clone https://github.com/Canbow/P2P-File-Transfer-Tool.git
+cd P2P-File-Transfer-Tool
+```
 
-2. Setup Backend (Signaling Server)
-Bash
+### 2. Setup Backend & Frontend (Unified Server)
+This project is configured to run from a single Node server that serves both the API/Sockets and the compiled React frontend.
+
+```bash
 cd server
 npm install
-# Create a .env file (optional for local, required for prod)
+
+# Build the React Frontend
+npm run build
+
+# Set up your environment variables
+# Create a .env file in the server/ directory:
 # PORT=5000
+# CLIENT_URL=http://localhost:3000
+# SESSION_SECRET=your_secret_key
+# GOOGLE_CLIENT_ID=...
+# GOOGLE_CLIENT_SECRET=...
+# GITHUB_CLIENT_ID=...
+# GITHUB_CLIENT_SECRET=...
+
+# Start the server
 npm start
-Server runs on localhost:5000
+```
+*The server will run on localhost:5000 and automatically initialize the SQLite database (`server/database.sqlite`).*
 
-3. Setup Frontend (Client)
+### 3. Development Mode
+If you want to run the React hot-reloading dev server:
 Open a new terminal:
-
-Bash
+```bash
 cd client
 npm install
-# Note: Ensure React points to localhost:5000 in dev
 npm start
-Client runs on localhost:3000
+```
+*Client runs on localhost:3000 and proxies API requests to localhost:5000.*
 
-⚠️ Current Limitations
-Mobile Background Tabs: iOS/Android may freeze the connection if the browser is minimized during transfer.
+---
 
-Symmetric NATs: Corporate or University firewalls may block P2P connections. (Future improvement: Add TURN server support).
+## ⚠️ Current Limitations
+* **Mobile Background Tabs:** iOS/Android may freeze the connection if the browser is minimized during transfer.
+* **Symmetric NATs:** Corporate or University firewalls may block P2P connections. (Future improvement: Add TURN server support).
+* **Browser Compatibility:** StreamSaver.js works best on Chrome/Edge/Firefox. Safari has stricter limitations on service workers.
 
-Browser Compatibility: StreamSaver.js works best on Chrome/Edge/Firefox. Safari has stricter limitations on service workers.
+---
 
-🗺️ Roadmap
-[ ] Add "Resumable Transfers" (if connection drops).
+## 🗺️ Roadmap
+- [ ] Add "Resumable Transfers" (if connection drops).
+- [ ] Implement TURN server for bypassing strict firewalls.
+- [ ] Add "Zip-on-the-fly" for sending folder structures.
+- [x] Modernize UI with Shadcn-inspired design.
+- [x] Add User Authentication & Database.
 
-[ ] Implement TURN server for bypassing strict firewalls.
+---
 
-[ ] Add "Zip-on-the-fly" for sending folder structures.
-
-[ ] Dark Mode UI.
-
-🤝 Contributing
+## 🤝 Contributing
 Contributions are welcome! Please open an issue or pull request for any bugs or improvements.
 
-📄 License
+## 📄 License
 This project is open source and available under the MIT License.
