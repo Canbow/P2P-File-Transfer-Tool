@@ -8,7 +8,7 @@
   },
   "scripts": {
     "start": "node index.js",
-    "build": "npm install --prefix ../client && npm run build --prefix ../client"
+    "build": "npm rebuild sqlite3 --build-from-source && npm install --prefix ../client && npm run build --prefix ../client"
   },
   "dependencies": {
     "bcryptjs": "^3.0.3",
