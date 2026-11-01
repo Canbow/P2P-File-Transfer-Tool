@@ -43,6 +43,8 @@ function App() {
   const writerRef = useRef(null);
   const receivedBytesRef = useRef(0);
   const incomingMetaRef = useRef(null);
+  const lastReceiveProgressRef = useRef(0);
+  const receiveStartTimeRef = useRef(0);
 
   useEffect(() => {
     socket.on("connect", () => {
@@ -126,6 +128,9 @@ function App() {
 
     peer.on("connect", () => {
         setStatus("P2P Connection Established!");
+        if (peer._channel) {
+            peer._channel.bufferedAmountLowThreshold = 256 * 1024;
+        }
     });
 
     peer.on("data", handleReceiveData);
@@ -152,6 +157,9 @@ function App() {
 
     peer.on("connect", () => {
         setStatus("P2P Connection Established!");
+        if (peer._channel) {
+            peer._channel.bufferedAmountLowThreshold = 256 * 1024;
+        }
     });
 
     peer.on("data", handleReceiveData);
@@ -167,7 +175,7 @@ function App() {
     return peer;
   }
 
-  // --- Large File Sending (With Backpressure) ---
+  // --- High-Performance Large File Sending (Event-Driven Backpressure) ---
   const sendFile = (file) => {
     if (!peerRef.current) return;
     setProgress(0);
@@ -183,11 +191,34 @@ function App() {
     peerRef.current.send(JSON.stringify(metadata));
 
     let offset = 0;
+    const channel = peerRef.current._channel;
+    const HIGH_WATER_MARK = 1024 * 1024; // 1MB buffer ceiling for line-rate throughput
+    const LOW_WATER_MARK = 256 * 1024;   // 256KB low water mark
 
-    // 2. The Reading Loop
-    const readSlice = () => {
+    if (channel) {
+        channel.bufferedAmountLowThreshold = LOW_WATER_MARK;
+    }
+
+    let lastProgressUpdate = 0;
+    const startTime = Date.now();
+
+    // 2. Event-Driven Reading Loop (Zero Timer Delay)
+    const readNextChunk = () => {
+        if (!peerRef.current) return;
+
         if (offset >= file.size) {
+            setProgress(100);
             setStatus("File Sent Successfully!");
+            return;
+        }
+
+        // Check if WebRTC socket buffer is saturated
+        if (channel && channel.bufferedAmount >= HIGH_WATER_MARK) {
+            // Pause reading and wait for native hardware/network drain event
+            channel.onbufferedamountlow = () => {
+                channel.onbufferedamountlow = null;
+                readNextChunk();
+            };
             return;
         }
 
@@ -195,39 +226,42 @@ function App() {
         const reader = new FileReader();
 
         reader.onload = (e) => {
+            if (!peerRef.current) return;
             const arrayBuffer = e.target.result;
             
-            // "canWrite" will be false if the buffer is full (Backpressure)
-            const canWrite = peerRef.current.send(arrayBuffer); 
-            
-            offset += arrayBuffer.byteLength;
-            setProgress(Math.round((offset / file.size) * 100));
-
-            if (canWrite) {
-                // Buffer is empty, read next chunk immediately
-                readSlice();
-            } else {
-                // Buffer is full! Wait for 'drain' or check buffer manually
-                const checkBuffer = setInterval(() => {
-                    // Check if buffer has cleared enough to send more
-                    if (peerRef.current._channel.bufferedAmount < CHUNK_SIZE * 2) {
-                        clearInterval(checkBuffer);
-                        readSlice();
-                    }
-                }, 10); // Check every 10ms
+            try {
+                peerRef.current.send(arrayBuffer);
+            } catch (err) {
+                console.error("Send error:", err);
+                return;
             }
+
+            offset += arrayBuffer.byteLength;
+
+            // Throttle UI re-renders to every 150ms to keep main thread completely unblocked
+            const now = Date.now();
+            if (now - lastProgressUpdate > 150 || offset >= file.size) {
+                lastProgressUpdate = now;
+                const pct = Math.round((offset / file.size) * 100);
+                const elapsedSec = (now - startTime) / 1000;
+                const speedMBps = elapsedSec > 0 ? (offset / (1024 * 1024) / elapsedSec).toFixed(1) : 0;
+                setProgress(pct);
+                setStatus(`Sending ${file.name} (${pct}% @ ${speedMBps} MB/s)...`);
+            }
+
+            // Immediately continue streaming next chunk without setTimeout/setInterval latency
+            readNextChunk();
         };
 
         reader.readAsArrayBuffer(slice);
     };
 
-    readSlice();
+    readNextChunk();
   };
 
-  // --- Large File Receiving (Direct to Disk) ---
+  // --- High-Performance Large File Receiving (Direct to Disk) ---
   const handleReceiveData = async (data) => {
       // A. Check if it's Metadata (JSON)
-      // Only check small packets to avoid freezing on big binary chunks
       if (data.byteLength < 1000) {
           try {
               const text = new TextDecoder().decode(data);
@@ -235,6 +269,8 @@ function App() {
               if (meta.type === 'metadata') {
                   incomingMetaRef.current = meta;
                   receivedBytesRef.current = 0;
+                  receiveStartTimeRef.current = Date.now();
+                  lastReceiveProgressRef.current = 0;
                   setProgress(0);
                   setStatus(`Receiving ${meta.fileName}...`);
                   
@@ -247,7 +283,7 @@ function App() {
                   return;
               }
           } catch (e) {
-              // Not JSON, assume binary
+              // Not JSON, assume binary chunk
           }
       }
 
@@ -257,11 +293,25 @@ function App() {
           receivedBytesRef.current += data.byteLength;
           
           if (incomingMetaRef.current) {
-              setProgress(Math.round((receivedBytesRef.current / incomingMetaRef.current.fileSize) * 100));
+              const totalSize = incomingMetaRef.current.fileSize;
+              const now = Date.now();
+
+              // Throttle UI progress re-renders to every 150ms
+              if (now - lastReceiveProgressRef.current > 150 || receivedBytesRef.current >= totalSize) {
+                  lastReceiveProgressRef.current = now;
+                  const pct = Math.round((receivedBytesRef.current / totalSize) * 100);
+                  const elapsedSec = (now - receiveStartTimeRef.current) / 1000;
+                  const speedMBps = elapsedSec > 0 ? (receivedBytesRef.current / (1024 * 1024) / elapsedSec).toFixed(1) : 0;
+                  setProgress(pct);
+                  setStatus(`Receiving ${incomingMetaRef.current.fileName} (${pct}% @ ${speedMBps} MB/s)...`);
+              }
               
-              if (receivedBytesRef.current === incomingMetaRef.current.fileSize) {
+              if (receivedBytesRef.current >= totalSize) {
                   setStatus("File Received & Saved!");
-                  writerRef.current.close();
+                  setProgress(100);
+                  try {
+                      writerRef.current.close();
+                  } catch (e) {}
                   writerRef.current = null;
                   incomingMetaRef.current = null;
                   receivedBytesRef.current = 0;
@@ -270,9 +320,12 @@ function App() {
       }
   };
 
-  const canSendFile = status === "P2P Connection Established!" || 
-                      status === "File Sent Successfully!" || 
-                      status === "File Received & Saved!";
+  const isTransferring = status.startsWith("Sending") || status.startsWith("Receiving");
+  const canSendFile = !isTransferring && (
+    status === "P2P Connection Established!" || 
+    status === "File Sent Successfully!" || 
+    status === "File Received & Saved!"
+  );
 
   return (
     <div className="app-container">
